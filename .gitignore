@@ -1,2 +1,4 @@
 .uuid
-
+nerd-fonts-metadata/*
+nerd-fonts/*
+!nerd-fonts/install.sh
