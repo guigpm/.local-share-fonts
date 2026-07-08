@@ -8,8 +8,8 @@ Just create a .fonts folder in your home directory (if it doesn't exist) and unp
 
 Clone into /home/username:
 
-    $ sudo apt install git
-    $ git clone https://github.com/msaulohenrique/codegenerator.git /home/username
+    $ sudo apt install git ttf-mscorefonts-installer
+    $ git clone https://github.com/guigpm/.local-share-fonts.git /home/USERNAME/.local/share/fonts
 
 Change "username" to your username on the machine.
 
