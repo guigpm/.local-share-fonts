@@ -1,15 +1,16 @@
-# .fonts for Linux
+# Fonts for Linux
 
-Tested in Linux Mint!
+Tested in Linux ZorinOS!
 
 ## Installation
 
-Just create a .fonts folder in your home directory (if it doesn't exist) and unpack/copy them there.
+Just create a `fonts` folder in your home directory (if it doesn't exist) and unpack/copy them there.
 
-Clone into /home/username:
+Clone into /home/USERNAME/.local/share/fonts:
 
-    $ sudo apt install git
-    $ git clone https://github.com/msaulohenrique/codegenerator.git /home/username
+    $ sudo apt install git ttf-mscorefonts-installer
+    $ mkdir -p /home/USERNAME/.local/share/
+    $ git clone https://github.com/guigpm/.local-share-fonts.git /home/USERNAME/.local/share/fonts
 
 Change "username" to your username on the machine.
 
