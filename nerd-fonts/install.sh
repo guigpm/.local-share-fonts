@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Install Nerd Fonts con Busca Remota por Proximidade
-__ScriptVersion="1.2"
+# Install Nerd Fonts con Busca Remota por Proximidade e Cache JSON Local
+__ScriptVersion="1.3"
 
 # Configurações de diretórios
 FONT_DIR="$(pwd)"
 DATA_DIR="${FONT_DIR}/../nerd-fonts-metadata"
 REPO_URL="https://github.com/ryanoasis/nerd-fonts/releases/latest"
 mkdir -p "$DATA_DIR"
+
+JSON_FILE="$DATA_DIR/latest_release.json"
+API_URL="${REPO_URL/github.com/api.github.com\/repos}"
+#echo "$API_URL" # esperado https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest
 
 # Função de Ajuda (Help)
 show_help() {
@@ -19,6 +23,7 @@ show_help() {
     echo "  update            Verifica e instala atualizações para todas as fontes já baixadas."
     echo "  list              Lista todas as fontes gerenciadas por este script."
     echo "  list-remote       Busca na API do GitHub e lista TODAS as fontes existentes para download."
+    echo "  update-cache      Busca na API do GitHub e força a atualização local do arquivo de cache."
     echo "  help, -h, --help   Exibe esta tela de ajuda."
     echo ""
     echo -e "\033[1;33mExemplos Práticos:\033[0m"
@@ -43,15 +48,48 @@ list_fonts() {
     fi
 }
 
-# Função: Listar Fontes Remotas (Puxa direto da API de Releases)
+# Descobre a versão estável atual remotamente de forma leve (cabeçalho HTTP)
+get_latest_version_tag() {
+    local location=$(curl -sI "$REPO_URL" | grep -i "location:" | tr -d '\r')
+    local tag=$(echo "$location" | grep -oP 'releases/tag/\K.*')
+    echo "$tag"
+}
+
+api_download_json_file() {
+    curl -s --request GET --url "$API_URL" --header "Accept: application/vnd.github+json" > "$JSON_FILE"
+}
+
+# Gerencia o cache do JSON local de forma inteligente para economizar requisições
+cache_api_json() {
+    
+    # 1. Se o arquivo local não existir, faz o download inicial obrigatório
+    if [ ! -f "$JSON_FILE" ]; then
+        echo "Baixando catálogo de fontes do GitHub pela primeira vez..."
+        api_download_json_file
+        return 0
+    fi
+
+    # 2. Se o arquivo já existe, lê a versão salva localmente nele
+    local local_version=$(grep -oP '"tag_name": "\K[^"]*' "$JSON_FILE")
+
+    # 3. Faz uma checagem leve para ver a versão atual do servidor
+    local remote_version=$(get_latest_version_tag)
+
+    # 4. Se a versão mudou, atualiza o JSON local com os novos dados
+    if [ "$local_version" != "$remote_version" ]; then
+        echo "Nova versão detectada ($remote_version). Atualizando catálogo local..."
+        api_download_json_file
+    fi
+}
+
+# Listar Fontes Remotas lendo o arquivo JSON local
 list_remote_fonts() {
-    echo "Conectando ao GitHub para buscar o catálogo completo de fontes..."
-    API_URL="${REPO_URL/github.com/api.github.com\/repos}"
-    #echo "$API_URL" # esperado https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest
-    local assets=$(curl --request GET --url "$API_URL" --header "Accept: application/vnd.github+json" | grep -oP '"name": "\K[^"]*' | grep '\.zip' | sed 's/\.zip//' | sort)
+    cache_api_json # Garante que o arquivo existe e está atualizado
+    
+    local assets=$(grep -oP '"name": "\K[^"]*' "$JSON_FILE" | grep '\.zip' | sed 's/\.zip//' | sort)
     
     if [ -z "$assets" ]; then
-        echo "Erro ao buscar a lista remota. Verifique sua conexão."
+        echo "Erro ao processar a lista remota localmente."
         return 1
     fi
 
@@ -59,20 +97,13 @@ list_remote_fonts() {
     echo "$assets" | column -c 80 | sed 's/^/  /'
 }
 
-# Função: Sugestão por Proximidade de Digitação
+# Sugestão por Proximidade de Digitação lendo o arquivo JSON local
 suggest_closest_fonts() {
     local typed_name=$1
-    echo -e "\033[1;31mErro: A fonte '$typed_name' não foi mapeada com esse nome exato no servidor.\033[0m"
-    echo "Buscando sugestões por proximidade de digitação..."
+    echo -e "\033[1;31mErro: A fonte '$typed_name' não foi mapeada com esse nome exato.\033[0m"
+    echo "Buscando sugestões no catálogo local..."
 
-    # Baixa a lista de nomes reais de zips da release estável mais recente
-    API_URL="${REPO_URL/github.com/api.github.com\/repos}"
-    local remote_list=$(curl --request GET --url "$API_URL" --header "Accept: application/vnd.github+json" | grep -oP '"name": "\K[^"]*' | grep '\.zip' | sed 's/\.zip//' | sort)
-
-    if [ -z "$remote_list" ]; then
-        echo "Não foi possível sugerir alternativas. Verifique se digitou letras maiúsculas/minúsculas corretamente."
-        return 1
-    fi
+    local remote_list=$(grep -oP '"name": "\K[^"]*' "$JSON_FILE" | grep '\.zip' | sed 's/\.zip//' | sort)
 
     echo ""
     echo -e "\033[1;33mVocê quis dizer uma destas fontes?:\033[0m"
@@ -90,10 +121,11 @@ suggest_closest_fonts() {
     if [ -n "$suggestions" ]; then
         echo "$suggestions" | sed 's/^/  👉  install /'
     else
-        echo " Nenhuma fonte parecida foi encontrada. Rode: $0 list-remote para ver a lista oficial completa."
+        echo " Nenhuma fonte parecida foi encontrada. Rode: $0 list-remote"
     fi
 }
 
+# Remove fisicamente a fonte e os registros locais de metadados
 uninstall_font() {
     local font_name=$1
     local meta_file="$DATA_DIR/${font_name}.version"
@@ -121,26 +153,24 @@ uninstall_font() {
     fi
 }
 
-get_latest_version_tag() {
-    local location=$(curl -sI "$REPO_URL" | grep -i "location:" | tr -d '\r')
-    local tag=$(echo "$location" | grep -oP 'releases/tag/\K.*')
-    echo "$tag"
-}
-
+# Instala a fonte desejada extraindo os dados diretamente do cache local do JSON
 install_font() {
     local font_name=$1
     echo "Verificando fonte: $font_name..."
 
-    local remote_version=$(get_latest_version_tag)
-    if [ -z "$remote_version" ]; then
-        echo "Erro: Não foi possível rastrear a última versão no GitHub."
+    cache_api_json # Valida/Garante o JSON local atualizado antes de proceder
+
+    # Extrai dados do arquivo local de metadados (Sem chamadas redundantes de rede)
+    local remote_version=$(grep -oP '"tag_name": "\K[^"]*' "$JSON_FILE")
+    local download_url=$(grep -oP '"browser_download_url": "\K[^"]*' "$JSON_FILE" | grep -i "${font_name}.zip" | head -n 1)
+
+    if [ -z "$download_url" ]; then
+        suggest_closest_fonts "$font_name"
         return 1
     fi
 
     local meta_file="$DATA_DIR/${font_name}.version"
-    local download_url="${REPO_URL}/download/${font_name}.zip"
 
-    # Checagem local antes de gastar internet
     if [ -f "$meta_file" ]; then
         local local_version=$(cat "$meta_file")
         if [ "$local_version" == "$remote_version" ]; then
@@ -152,7 +182,6 @@ install_font() {
     echo "Baixando $font_name via redirecionamento automático..."
     local zip_path="/tmp/${font_name}.zip"
     
-    # Modificado para checar o status de erro HTTP real (404 significa que o nome do zip está errado no repositório)
     wget -q -L --show-progress -O "$zip_path" "$download_url"
 
     if [ $? -eq 0 ] && [ -s "$zip_path" ]; then
@@ -165,13 +194,13 @@ install_font() {
         echo -e "\033[1;32m✓ $font_name instalada com sucesso!\033[0m"
         return 0
     else
-        # Se falhou, limpa o arquivo corrompido de erro e chama o motor de sugestões inteligentes por proximidade
         rm -f "$zip_path"
-        suggest_closest_fonts "$font_name"
+        echo "Erro ao baixar os arquivos da fonte."
         return 1
     fi
 }
 
+# Varre as fontes locais existentes e atualiza se o JSON remoto indicar novas versões
 update_all() {
     echo "Iniciando checagem de atualizações..."
     local updated=0
@@ -185,7 +214,7 @@ update_all() {
     done
 
     if [ $updated -eq 1 ]; then
-        echo "Atualizando o cache de fontes do Zorin OS..."
+        echo "Atualizando o cache de fontes..."
         fc-cache -f -v > /dev/null
     fi
 }
@@ -216,6 +245,10 @@ case "$1" in
         ;;
     list-remote)
         list_remote_fonts
+        ;;
+    update-cache)
+        api_download_json_file
+        echo "Updated."
         ;;
     help|-h|--help)
         show_help
